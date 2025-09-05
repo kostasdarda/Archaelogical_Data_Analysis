@@ -1,0 +1,230 @@
+---
+title: "Data_Organization_2"
+output: html_document
+date: "2025-05-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### I AM NOT THE ONE WHO CREATED THE FOLLOWING CODE 
+
+### I PROVIDE IT FOR THE BETTER UNDERSTANDING OF THE
+### FINAL FILE THAT WAS USED FOR FURTHER ANALYSIS ("DataForAnalysisv1") 
+
+THIS FILE IS USED IN ORDER TO BETTER ASSIGN DATEST TO EACH OF THE OBSERVATIONS,
+TO REMOVE DUPLICATES, TO CONVERT NISP COUNTS TO PROPORTIONS AND STANDARDIZE THE 
+DATA AND FINALLY, TO EXTRACT REINDEER SUITABILITY
+
+* These dates in our data derived from radiometric, luminescence
+and amino acid methods, and electron spin resonance. For contexts with multiple dates, 
+we sum the probability estimates and use the year with the highest summed probability.
+
+* To refine interpretive value, proportional abundances were calculated 
+by excluding rodent remains, standardizing NISP values across assemblages.
++ removed the proportions summing to greater than 1 and those with NAs as well
+
+* The dataset was paired with modeled estimates of habitat suitability for Rangifer tarandus,
+derived from fossil and eDNA records. As these models generate predictions spanning 20–69 ka,
+only assemblages within this temporal range could be assigned corresponding suitability values.
+Consequently, faunal assemblages dating outside this interval (i.e., from 184 ka to 70 ka) are not
+associated with reindeer suitability estimates.
+
+
+# Determining a Date
+
+Each observation in the Neanderthal data is a context that represents occupation of a site in Eurasia before 20ka BP. To narrow this down to Neanderthals, we will constrain the sample by location (pre-50ka BP) and location (Western Eurasia). This should keep any other Homo species from accidentally making it into our sample.
+
+But first, in order to do this, we need to assign each observation to a date. To do this, we will use the dates table (Supplemental 2-3), which contain results from absolute dating methods, including C14, ESR, OSL, U Series, and TL. Some sites only have one of these, while others have some combination of the above.
+
+In order to estimate date based on a series of observations at any given site context, I sum the probability distribution functions for all dates observed at a site context.
+
+The code below:
+
+- Pulls site i from the Neanderthal data (Supplemental 1),
+- Pulls all dates from the three tables that have the same locality, assemblage, and GeoLayer,
+- If radiocarbon dates are present, it calibrates the radiocarbon dates,
+- If any other dates are present, it estimates a probability density function,
+- Next, it sums the probability density functions from the non-c14 dates,
+- Then, it creates a summed probability distribution of the radiocarbon dates, if present,
+- Then, it sums the non-c14 and c14 probability distribution functions,
+- Last, to select a date, it takes the year BP associated with the highest point on the summed probability distribution function.
+- Note that this code has already been run.
+
+```{r,eval=F}
+maindata<-read.csv("./CleanedData_Zooarch.csv")
+
+#reading in the location data
+#These should bind by GeoLayer
+
+
+#reading in the previous layers
+data1<-read.csv("./Dates_Data/Dates_Geog.csv",na.strings="-")
+data2<-read.csv("./Dates_Data/Dates_ArchLayer.csv",na.strings="-")
+data3<-read.csv("./Dates_Data/Dates_Assemb.csv",na.strings="-")
+data3$Age<-as.numeric(data3$Age)
+data3$Pos..standard.deviation<-as.numeric(data3$Pos..standard.deviation)
+
+#adding a column for mean date and sd, although its not really a mean, its more the most likely age with the sum of the distribution within 5000 years
+maindata$meanage<-NA
+maindata$sdage<-NA
+#for loop!
+for (i in 1:nrow(maindata)){
+  #identifying the site
+  site<-maindata[i,]
+  #pulling observations from the 3 data tables into 1 table
+  dates1<-data1[data1$Locality==site$Locality 
+        & data1$Assemblage.name==site$Assemblage
+        & data1$GeoLayer==site$GeoLayer.Name,]
+  dates2<-data2[data2$Locality==site$Locality 
+                & data2$Assemblage.name==site$Assemblage
+                & data2$GeoLayer==site$GeoLayer.Name,]
+  dates3<-data3[data3$Locality==site$Locality 
+                & data3$Assemblage.name==site$Assemblage
+                & data3$GeoLayer==site$GeoLayer.Name,]
+  dates<-rbind(dates1,dates2,dates3)
+  #removing observations where the Age is NA
+  dates<-dates[!is.na(dates$Age),]
+  dates<-dates[!is.na(dates$Pos..standard.deviation),]
+  dates<-dates[dates$Pos..standard.deviation<90000,]
+  #skipping sites with no observation
+  if (nrow(dates)== 0){next}
+  
+  #Now we will only have dated sites! But we still need to deal with calibrating radiocarbon dates so that they are comparable to other methods.
+    c14sites<-dates[dates$Dating.method=="14C (radiocarbon) dating",]
+    
+    #if there are radiocarbon dates, we calibrate them!
+    if (nrow(c14sites)!=0){
+    cals<-calibrate(x=c14sites$Age,
+                errors=c14sites$Pos..standard.deviation,
+                calCurves = rep("intcal20",nrow(c14sites)),
+                verbose=F)}
+  
+  #Now we need to know if there are other dates
+  notc14sites<-dates[dates$Dating.method!="14C (radiocarbon) dating",]
+  udates<-data.frame(year=20000:200000,pdf=0)
+  if (nrow(notc14sites)!=0) {
+    #stack the distributions and find the mean and sd
+    
+    for (z in 1:nrow(notc14sites)){
+      udates$pdf<-udates$pdf+dnorm(c(20000:200000),notc14sites$Age[z],notc14sites$Pos..standard.deviation[z])
+    }
+    meanage<-udates$year[udates$pdf==max(udates$pdf)]
+    maindata$meanage[i]<-meanage
+    maindata$sdage[i]<-sum(udates$pdf[udates$year<=meanage+5000 | udates$year>=meanage-5000])/nrow(notc14sites)
+  } 
+  
+  if (nrow(c14sites)!=0){
+    #stack the c14s only and find the mean and sd
+    calspd<-as.data.frame(spd(cals,c(200000,20000))$grid)
+    #stack calspd and udates
+    calspd$totheigh<-calspd$PrDens+udates$pdf
+    
+    meanage<-calspd$calBP[calspd$totheigh==max(calspd$totheigh)]
+    maindata$meanage[i]<-meanage
+    maindata$sdage[i]<-sum(calspd$totheigh[calspd$calBP<=meanage+5000 | calspd$calBP>=meanage-5000])/(nrow(c14sites)+nrow(notc14sites))
+    #add to mainDF
+  }
+  
+}
+
+write.csv(maindata,"./KonstantinosDatawDates.csv",row.names = F)
+```
+
+# Removing Duplicates
+
+Are they duplicates? Do we want to filter out different contexts from the same site if they have different observations?
+
+```{r}
+maindata<-read.csv("./KonstantinosDatawDates.csv",na.strings = c("-","NA"))
+
+maindata$meanage[maindata$meanage==20000 | maindata$meanage==200000]<-NA
+
+#now to remove duplicates!
+#these are duplicates in location (long,lat), and time (z). We will need to do this again when they end up binned, I think.
+maindata<-distinct(maindata,X,Y,NISP.Sum.class.Mammalia,.keep_all=T)
+#and remove NAs
+maindata<-maindata[is.na(maindata$meanage)!=T,]
+
+#Trim Temporally - definint the temporal extent
+#maindata<-maindata[maindata$meanage<145000,]
+#maindata<-maindata[maindata$meanage>50000,]
+hist(maindata$meanage,breaks=100) #this almost looks like I could run with 1000 year intervals
+```
+
+# Converting NISP Counts to Proportions
+
+```{r,eval=F}
+#Removing sites with no NISP totals for mamammals
+maindata<-maindata[is.na(maindata$NISP.Sum.class.Mammalia)==FALSE,]
+#making rodent NAs 0s
+maindata$NISP.Sum.order.Rodentia[is.na(maindata$NISP.Sum.order.Rodentia)==T]<-0
+
+#Subtracting rodents from the mammal nisp
+maindata$totalNISP<-maindata$NISP.Sum.class.Mammalia-maindata$NISP.Sum.order.Rodentia
+
+#removing data with 0 NISP
+maindata<-maindata[maindata$totalNISP!=0,]
+
+#calculating proportions
+for (i in 17:37){
+        maindata[,i]<-round(maindata[,i]/maindata$totalNISP,5)
+}
+
+
+#Now to remove out some of the bad data
+listofbads<-list()
+
+#clearing out the proportions greater than 1 where NISP of a species was greater than Total NISP...
+for (i in 1:nrow(maindata)){
+  obs<-maindata[i,]
+  #recording the row for those with no values, so just NAs
+  if (is.na(sum(obs[,17:37]))==T) {
+    append(listofbads,values=i)
+  } else if (sum(obs[,17:37])>1) {
+    listofbads<-append(listofbads,values=list(i)) #recording the row of those that sum greater than 1...
+  }
+}
+
+#removing the bads
+maindata<-maindata[-as.numeric(listofbads),]
+```
+
+# Extracting Reindeer Suitability
+
+These only go back to 69ka ago. So it will only cover a subset of the sites, those between 20ka and 69ka ago.
+
+
+```{r,eval=F}
+setwd(" ... ")    # I DO NOT PROVIDE THIS SPECIFIC DIRECTORY FOR PRIVACY REASONS 
+toplist<-list.files(path="./Predictions/MaxEnt/Model3/Continuous/")
+
+RD<-stack(paste0("./Predictions/MaxEnt/Model3/Continuous/",(toplist[c(order(as.numeric(gsub("[^0-9]", "", toplist))))]))[21:length(toplist)])
+
+#rounding observations to centuries
+maindata$millie<-round(maindata$meanage,-3)
+maindata$RD_Suitability<-NA
+
+mills<-seq(20000,69000,1000)
+
+for (i in 1:length(mills)){
+  Thesesites<-maindata[maindata$millie==mills[i],]
+  Thismap<-RD[[i]]
+  #skipping centuries with no observations
+  if (nrow(Thesesites)==0) { next }
+  #begin extraction
+  Thesesites_sp<-st_as_sf(Thesesites,coords=c("X","Y"),crs=projection(sPDF))
+  lambert<-CRS("+init=epsg:3035")
+  Thesesites_sp<-st_transform(Thesesites_sp,lambert)
+  
+  #extract their values from the rasters
+  extracted<-as.data.frame(extract(x=Thismap,y=Thesesites_sp))
+  
+  #add them to our original dataframe
+  maindata[maindata$millie==mills[i],]$RD_Suitability<-extracted[,1]
+}
+
+write.csv(maindata,"./StudentDataCollection/Konstantinos_Neanderthals/DataForAnalysisv1.csv",row.names = F)
+
+```
