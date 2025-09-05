@@ -1,0 +1,825 @@
+---
+title: "Data_analysis"
+output:
+  html_document:
+    df_print: paged
+date: "2025-05-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(mgcv)
+library(purrr)
+
+```
+
+
+
+
+
+```{r}
+
+data <- read_csv("DataForAnalysisv1.csv")
+cleaned_data <- data
+
+```
+
+
+BELOW I HAVE CREATED SOME LINES OF CODE THAT CAN BE USED IN ORDER TO STANDARDIZE THE DATA (NOT USED IN OUR CASE).
+HOWEVER, ALL THE STEPS TO REACH THE FINAL "DataForAnalysisv1.csv" FILE THAT IS USED IN THE FOLLOWING ANALYSIS,
+ARE SHOWN IN THE "Data_Organization_2.Rmd" FILE.
+
+Here, I standardize the data.         
+I do the following:
+NISP of each genus / (Total NISP mammals - Total NISP rodentia)       # I am ingoring the anatidae family
+
+mammal_nisp, rodent_nisp, adjusted_total_nisp: The first two are the same with the 
+existing ones, just replacing "-" and NA with 0. The 3rd contains the difference of the other two.
+
+<!-- long_data_std <- long_data %>% -->
+<!--   mutate( -->
+<!--     mammal_nisp = as.numeric(ifelse(is.na(`NISP Sum class Mammalia`) | `NISP Sum class Mammalia` %in% c("-", ""), 0, `NISP Sum class Mammalia`)), -->
+<!--     rodent_nisp = as.numeric(ifelse(is.na(`NISP Sum order Rodentia`) | `NISP Sum order Rodentia` %in% c("-", ""), 0, `NISP Sum order Rodentia`)) -->
+<!--   ) %>% -->
+<!--   mutate( -->
+<!--     adjusted_total_nisp = mammal_nisp - rodent_nisp, -->
+<!--     adjusted_total_nisp = ifelse(adjusted_total_nisp < 1, NA, adjusted_total_nisp),  # avoid division by 0 or negative -->
+<!--     prop = count / adjusted_total_nisp -->
+<!--   ) -->
+  
+#####
+
+
+
+
+
+species_column: I am using pivot_longer to create one column from all the species nisp column
+prop: Column containing the observations for the species (standardized)
+genus: I am also creating a column based on the species_column for the sake of the later analysis
+```{r}
+
+long_data <- cleaned_data %>%
+  pivot_longer(cols = ends_with("_NISP"),     #taking all the nisp species columns 
+               names_to = "species_column", 
+               values_to = "prop") %>%
+  mutate(genus = str_remove(species_column, "_NISP") %>% tolower()) 
+
+```
+
+
+
+
+
+
+I am adding a column Period: contains the periods shown in the chunk.
+Only MP and UP are shown in these data (if we create the column based on meanage)
+
+```{r}
+
+long_data <- long_data %>%
+  mutate(
+    Period = case_when(
+      meanage > 300000 ~ "Lower Paleolithic",
+      meanage <= 300000 & meanage > 45000 ~ "Middle Paleolithic",
+      meanage <= 45000 & meanage > 11500 ~ "Upper Paleolithic",
+      meanage <= 11500 & meanage > 8000 ~ "Epipaleolithic / Mesolithic",
+      meanage <= 8000 ~ "Neolithic / Chalcolithic",
+      TRUE ~ "Unknown"
+    )
+  )
+
+
+```
+
+
+I am showing the columns I have created
+```{r}
+long_data[, (ncol(long_data)-6):ncol(long_data)]
+
+```
+
+In the plots that I will use in my report, I made some adjustments using ai and
+the information from some websites to make them more appopriate aesthetically
+for publication.
+
+
+I create a plot to show the mean abundance of each genus in total.
+
+```{r}
+# I compute the mean proportion per genus
+mean_std <- long_data %>%
+  group_by(genus) %>%
+  summarise(mean_prop = mean(prop, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mean_prop))
+
+ggplot(mean_std, aes(x = fct_reorder(genus, mean_prop), y = mean_prop)) +
+  geom_col(fill = "#4E79A7") +
+  coord_flip() +
+  labs(
+    #title = "Mean Standardized Proportion of Each Genus",
+    x = "Genus",
+    y = "Mean Proportion (Standardized NISP)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(size = 11),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(face = "italic"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+```
+
+
+```{r}
+mean_std <- long_data %>%
+  group_by(genus) %>%
+  summarise(mean_prop = mean(prop, na.rm = TRUE), .groups = "drop") %>%
+  left_join(rank_lookup, by = "genus") %>%  ##### joining rank info
+  arrange(desc(mean_prop))
+
+ggplot(mean_std, aes(x = fct_reorder(genus, mean_prop), y = mean_prop)) +
+  geom_col(fill = "#4E79A7") +
+  geom_text(aes(label = rank_group), hjust = -0.1, size = 3, na.rm = TRUE) +  # label with rank
+  coord_flip() +
+  labs(
+    x = "Genus",
+    y = "Mean Proportion (Standardized NISP)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(size = 11),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(face = "italic"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+
+
+```
+
+
+
+
+
+I create a plot of the "Relative Abundance of Each Genus Across Periods".
+I order the genera by the mean standardized proportion of each genus (descending order).
+All the Epipaleolithic and Neolithic are not seen in this file.
+
+```{r}
+
+# Adjusting the rank column for aesthetic reasons in the plot
+adjusted_rank_lookup <- tibble(
+  genus = c(
+    "rangifer", "sus", "dama", "cervus",    # High
+    "alces", "equus", "bison", "saiga",     # Medium
+    "mammuthus", "coelodonta", "megaloceros", "palaeoloxodon"  # Low (megafauna)
+  ),
+  rank_group = c(
+    rep("H", 4),
+    rep("M", 4),
+    rep("L", 4)
+  )
+)
+
+
+# This gives us the overall abundance of each genus (used to order the plot)
+genus_order <- long_data %>%
+  group_by(genus) %>%
+  summarise(total_prop = sum(prop, na.rm = TRUE), .groups = "drop")
+
+# To find how much of each genus appears in each archaeological period:
+temporal_prop <- long_data %>%
+  filter(!is.na(prop)) %>%
+  group_by(genus, Period) %>%
+  summarise(std_prop = sum(prop, na.rm = TRUE), .groups = "drop") %>%
+  left_join(genus_order, by = "genus") %>%    #joining by genus_order 
+  left_join(adjusted_rank_lookup, by = "genus")       ##### FOR RANKING
+
+##### one row per genus that has a rank
+label_data <- temporal_prop %>%
+  filter(!is.na(rank_group)) %>%
+  distinct(genus, .keep_all = TRUE)
+
+
+
+
+# I plot the standardized proportions across periods ordered by overall abundance
+ggplot(temporal_prop, aes(x = fct_reorder(genus, total_prop), y = std_prop, fill = Period)) +
+  geom_col(position = "fill", width = 0.7) +   # for stacked, scaled bars
+  coord_flip() +
+  labs(
+    #title = "Relative Abundance of Each Genus Across Periods",
+    x = "Genus",
+    y = "Proportion"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(size = 11),
+    axis.text.y = element_text(face = "italic"),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    legend.position = "right",
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+  geom_text(
+  data = label_data,
+  aes(x = fct_reorder(genus, total_prop), y = 1.05, label = rank_group),
+  inherit.aes = FALSE,
+  hjust = 0,
+  size = 3
+)
+
+```
+
+
+
+
+I rank the genera
+High ranked: "rangifer", "sus", "dama", "cervus"
+Medium ranked: "alces", "equus", "bison", "saiga
+Low ranked/Megafauna: "mammuthus", "coelodonta", "megaloceros", "palaeoloxodon"
+```{r}
+
+# Ranking categories (based on paper)
+
+rank_lookup <- tibble(
+  genus = c(
+    "rangifer", "sus", "dama", "cervus",    # High
+    "alces", "equus", "bison", "saiga",     # Medium
+    "mammuthus", "coelodonta", "megaloceros", "palaeoloxodon"  # Low (megafauna)
+  ),
+  rank_group = c(
+    rep("High", 4),
+    rep("Medium", 4),
+    rep("Low/Megafauna", 4)
+  )
+)
+
+```
+
+
+
+I do this to calculate the proportion of high, medium and low.
+```{r}
+
+
+mean_rank_prop <- mean_std %>%
+  inner_join(rank_lookup, by = "genus") %>%
+  group_by(rank_group) %>%
+  summarise(
+    rank_prop = sum(mean_prop, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(mean_rank_prop)
+
+```
+
+I do this to calculate their relative proportions, so the proportion of high 
+taking into account only the genera belonging to high, medium, low. Same for 
+the proportions of medium and low.
+```{r}
+
+mean_rank_prop <- mean_std %>%
+  inner_join(rank_lookup, by = "genus") %>%
+  group_by(rank_group) %>%
+  summarise(
+    raw_prop = sum(mean_prop, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    total = sum(raw_prop),
+    relative_prop = raw_prop / total
+  ) %>%
+  select(rank_group, relative_prop)
+
+print(mean_rank_prop)
+
+
+
+```
+
+
+
+
+
+How the prey rankings changed over time, using millie.
+This is not the best, below at some point I use a generalized additive model.
+```{r}
+binned_trend_std <- long_data %>%
+  filter(!is.na(prop), !is.na(millie)) %>%
+  inner_join(rank_lookup, by = "genus") %>%
+  group_by(millie, rank_group) %>%
+  summarise(prop_sum = sum(prop, na.rm = TRUE), .groups = "drop") %>%
+  group_by(millie) %>%
+  mutate(new_prop = prop_sum / sum(prop_sum)) %>%     # new_prop just to distinguish it with the existing one
+  ungroup()
+
+#ordering in legend
+binned_trend_std$rank_group <- factor(binned_trend_std$rank_group, levels = c("High", "Medium", "Low/Megafauna"))
+
+ggplot(binned_trend_std, aes(x = millie, y = new_prop, color = rank_group)) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.4, linewidth = 1.3) +
+  # In sparse areas loess can overshoot or undershoot the true values
+  # If I do not state explicitly that the limmits for the y axis are from 0 to 1,
+  # a proportion could go to the negatives
+  geom_vline(xintercept = 45000, linetype = "dashed", color = "black") +   # OPTIONAL: TO SHOW WHEN WE GO FROM MIDDLE TO UPPER PALEOLITHIC
+  scale_y_continuous(limits = c(0, 1)) +  
+  scale_x_reverse(name = "Time (Years BP, binned by 1,000)") +
+  scale_color_manual(values = c("High" = "darkgreen", "Medium" = "purple", "Low/Megafauna" = "orange")) +
+  labs(
+    #title = "Proportional Trend of Prey Ranks Over Time",
+    y = "Proportion of Standardized NISP",
+    color = "Prey Rank"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(size = 11),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+```
+
+I made the same plot with the above one, but only for the Upper Paleolithic.
+I realized from the plot above that it is a bit more wobbly in the later years.
+Could it be associated with the bigger amount of changes (ecological, technological, etc. during that period?)
+
+But it will not be used, as there is some inconsistency with the previous plot which is across the whole period.
+
+```{r}
+# I am filtering for Upper Paleolithic (less than 45,000 BP)
+upper_paleo_trend <- binned_trend_std %>%
+  filter(millie <= 45000)
+
+#ordering in legend
+upper_paleo_trend$rank_group <- factor(upper_paleo_trend$rank_group, levels = c("High", "Medium", "Low/Megafauna"))
+
+
+ggplot(upper_paleo_trend, aes(x = millie, y = new_prop, color = rank_group)) +
+  geom_smooth(method = "loess", se = FALSE, span = 0.4, linewidth = 1.3) +
+  scale_y_continuous(limits = c(0, 1)) +  
+  scale_x_reverse(name = "Time (Years BP, binned by 1,000)") +
+  scale_color_manual(values = c("High" = "darkgreen", "Medium" = "purple", "Low/Megafauna" = "orange")) +
+  labs(
+    title = "Proportional Trend of Prey Ranks During the Upper Paleolithic",
+    y = "Proportion of Standardized NISP",
+    color = "Prey Rank"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(size = 11),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+
+
+
+
+```
+
+
+
+I am plotting the proportion of each ranking per period.
+
+```{r}
+ranked_period_data <- long_data %>%
+  inner_join(rank_lookup, by = "genus") %>%
+  group_by(Period, rank_group) %>%
+  summarise(prop_sum = sum(prop, na.rm = TRUE), .groups = "drop") %>%
+  group_by(Period) %>%
+  mutate(prop_periodbased = prop_sum / sum(prop_sum))
+
+# ordering in legend
+ranked_period_data$rank_group <- factor(ranked_period_data$rank_group, levels = c("High", "Medium", "Low/Megafauna"))
+
+
+ggplot(ranked_period_data, aes(x = rank_group, y = prop_periodbased, fill = rank_group)) +
+  geom_col() +
+  facet_wrap(~ Period) +
+  labs(
+    #title = "Proportion of Prey Ranks by Archaeological Period",
+    x = "Prey Rank Category",
+    y = "Proportion of Standardized NISP",
+    fill = "Prey Rank"  # updated legend title
+  ) +
+  scale_fill_manual(values = c("High" = "darkgreen", "Medium" = "purple", "Low/Megafauna" = "orange")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  )
+
+```
+
+
+
+
+
+1st case: Medium vs High
+
+Estimate (High) = −8.41
+p-value = 0.0107
+
+Rejecting the null hypothesis --> High does explain the variation in Medium
+
+The negative coefficient indicates that as the proportion of High-ranked prey increases,
+the proportion of Medium-ranked prey decreases. 
+(aligning with prey choice model --> Medium-ranked prey were more common
+only when high-ranked ones were less available)
+
+```{r}
+# Model 1: Does High explain variation in Medium?
+mod_medium.high <- glm(Medium ~ High, data = binned_means, family = quasibinomial)
+summary(mod_medium.high)
+
+
+mod_summary <- summary(mod_medium.high)
+slope <- coef(mod_summary)[2, 1]
+pval  <- coef(mod_summary)[2, 4]
+
+label_text <- paste0("β = ", round(slope, 3), "\n",
+                     "p value = ", format.pval(pval, digits = 3, eps = .001))
+
+
+ggplot(binned_means, aes(x = High, y = Medium)) +
+  geom_point() +
+  stat_smooth(method = "glm", method.args = list(family = "quasibinomial"), se = TRUE) +
+  labs(
+    #title = "GLM Fit: Medium vs. High Prey Proportions",
+    x = "High-ranked Proportion",
+    y = "Medium-ranked Proportion"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  ) + coord_fixed() + annotate("text", x = 0.22, y = 0.23, label = label_text, hjust = 1, size = 4)
+
+
+
+
+
+
+
+
+
+```
+
+
+2nd case: Low vs High
+
+Estimate (High) = -37.1010
+p-value = 0.0215
+
+Rejecting the null hypothesis --> High does explain the variation in Low
+
+The negative coefficient indicates that as the proportion of High-ranked prey increases,
+the proportion of Low-ranked prey decreases. In this case, there is an even sharper
+drop than the previous case, which reflects the fact that when the High prey decreases,
+then there is more incentive to hunt the Medium prey than the Low Prey.
+
+
+
+```{r}
+# Model 2: Does High explain variation in Low/Megafauna?
+
+mod_low.high <- glm(`Low/Megafauna` ~ High, data = binned_means, family = quasibinomial)
+summary(mod_low.high)
+
+mod_summary <- summary(mod_low.high)
+slope <- coef(mod_summary)[2, 1]
+pval  <- coef(mod_summary)[2, 4]
+
+label_text <- paste0("β = ", round(slope, 3), "\n",
+                     "p value = ", format.pval(pval, digits = 3, eps = .001))
+
+ggplot(binned_means, aes(x = High, y = `Low/Megafauna`)) +
+  geom_point() +
+  stat_smooth(method = "glm", method.args = list(family = "quasibinomial"), se = TRUE) +
+  labs(
+    #title = "GLM Fit: Low vs. High Prey Proportions",
+    x = "High-ranked Proportion",
+    y = "Low-ranked Proportion"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  ) + coord_fixed() + annotate("text", x = 0.22, y = 0.23, label = label_text, hjust = 1, size = 4)
+
+
+```
+
+3rd case: Low vs Medium
+
+Estimate (Medium) = -3.5047 
+p-value = 0.792
+
+No significant relationship found, so it cannot be proved that changes in medium-ranked 
+prey proportions predict changes in low-ranked prey.
+
+An explanation could be that the foragers may have stopped at medium-ranked 
+prey unless facing severe resource stress, population pressure, or environmental change.
+This result aligns also, with what I have already found in the Proportion of Prey ranks 
+over time and per period, since it is clear that the low ranked prey proportion remains in 
+very low levels and almost unchanged.
+
+
+```{r}
+# Model 3: Does Medium explain variation in Low/Megafauna?
+
+mod_low.medium <- glm(`Low/Megafauna` ~ Medium, data = binned_means, family = quasibinomial)
+summary(mod_low.medium)
+
+ggplot(binned_means, aes(x = Medium, y = `Low/Megafauna`)) +
+  geom_point() +
+  stat_smooth(method = "glm", method.args = list(family = "quasibinomial"), se = TRUE) +
+  labs(
+    title = "GLM Fit: Low vs. Medium Prey Proportions",
+    x = "Medium -ranked Proportion",
+    y = "Low-ranked Proportion"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+I am using a generalized additive model to show how the prey rankings changed 
+over time.
+
+```{r}
+cleaned_data <- cleaned_data %>%
+  mutate(
+    High = rowSums(select(., Rangifer_NISP, Sus_NISP, Dama_NISP, Cervus_NISP), na.rm = TRUE),
+    Medium = rowSums(select(., Alces_NISP, Equus_NISP, Bison_NISP, Saiga_NISP), na.rm = TRUE),
+    Low = rowSums(select(., Mammuthus_NISP, Coelodonta_NISP, Megaloceros_NISP, Palaeoloxodon_NISP), na.rm = TRUE),
+    total = High + Medium + Low
+  ) %>%
+  mutate(
+    High = ifelse(total > 0, High / total, NA),      # rows with total == 0 are assigned NA
+    Medium = ifelse(total > 0, Medium / total, NA),
+    Low = ifelse(total > 0, Low / total, NA)
+  )
+
+rank_long <- cleaned_data %>%
+  select(meanage, High, Medium, Low) %>%
+  pivot_longer(cols = c(High, Medium, Low), names_to = "rank_group", values_to = "prop") %>%
+  filter(!is.na(meanage), !is.na(prop))
+
+
+rank_long$rank_group <- factor(rank_long$rank_group, levels = c("High", "Medium", "Low"))  # just to have them in this order in the plot
+
+
+ages <- seq(min(rank_long$meanage), max(rank_long$meanage), length.out = 300)    # creating 300 time points
+
+gam_preds <- rank_long %>%
+  group_by(rank_group) %>%
+  group_split() %>%
+  map_df(function(df) {
+    mod <- gam(prop ~ s(meanage), data = df, family = quasibinomial)
+    pred <- predict(mod, newdata = data.frame(meanage = ages), se.fit = TRUE)
+    tibble(
+      meanage = ages,
+      rank_group = unique(df$rank_group),
+      fit = family(mod)$linkinv(pred$fit),
+      upper = family(mod)$linkinv(pred$fit + 1.96 * pred$se.fit),
+      lower = family(mod)$linkinv(pred$fit - 1.96 * pred$se.fit)
+    )
+  })
+
+
+
+ggplot() +
+  geom_point(data = rank_long, aes(x = meanage, y = prop), alpha = 0.3, size = 1, shape = 1) +
+  geom_line(data = gam_preds, aes(x = meanage, y = fit), color = "black", linewidth = 1) +
+  geom_line(data = gam_preds, aes(x = meanage, y = upper), linetype = "dashed", color = "black") +
+  geom_line(data = gam_preds, aes(x = meanage, y = lower), linetype = "dashed", color = "black") +
+  scale_x_reverse(name = "Years BP") +
+  scale_y_continuous(name = "Estimated Proportion", limits = c(0, 1)) +
+  facet_wrap(~ rank_group, nrow = 1) +
+  theme_bw() +              
+ # ggtitle("GAM-Fitted Prey Proportions") +
+   theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11)
+  ) 
+
+
+
+
+```
+
+Note: In the plot above, the confidence intervals are overlapping in the prey rankings 
+at some periods (but it matches expectations for a general trend in the broadening of diet through time)
+
+
+
+
+
+
+
+```{r}  
+ 
+plot(Rangifer_NISP ~ RD_Suitability, cleaned_data, ylab = "Proportion Reindeer", xlab = "Reindeer Suitability")
+mod1 <- glm(Rangifer_NISP ~ RD_Suitability, cleaned_data, family = quasibinomial)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(RD_Suitability = seq(0, 1, 0.001)), se.fit = TRUE)
+lines(seq(0, 1, 0.001), ilink(pred$fit))
+lines(seq(0, 1, 0.001), ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(seq(0, 1, 0.001), ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Sus_NISP ~ Rangifer_NISP, cleaned_data, ylab = "Proportion Sus", xlab = "Reindeer Reindeer")
+mod1 <- glm(Sus_NISP ~ Rangifer_NISP, cleaned_data, family = quasibinomial)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(Rangifer_NISP = seq(0, 1, 0.001)), se.fit = TRUE)
+lines(seq(0, 1, 0.001), ilink(pred$fit))
+lines(seq(0, 1, 0.001), ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(seq(0, 1, 0.001), ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Cervus_NISP ~ Rangifer_NISP, cleaned_data, ylab = "Proportion Cervus", xlab = "Reindeer Reindeer")
+mod1 <- glm(Cervus_NISP ~ Rangifer_NISP, cleaned_data, family = quasibinomial)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(Rangifer_NISP = seq(0, 1, 0.001)), se.fit = TRUE)
+lines(seq(0, 1, 0.001), ilink(pred$fit))
+lines(seq(0, 1, 0.001), ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(seq(0, 1, 0.001), ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Mammuthus_NISP ~ Rangifer_NISP, cleaned_data, ylab = "Proportion Mammuthus", xlab = "Reindeer Reindeer")
+mod1 <- glm(Mammuthus_NISP ~ Rangifer_NISP, cleaned_data, family = quasibinomial)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(Rangifer_NISP = seq(0, 1, 0.001)), se.fit = TRUE)
+lines(seq(0, 1, 0.001), ilink(pred$fit))
+lines(seq(0, 1, 0.001), ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(seq(0, 1, 0.001), ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+cor(na.omit(cleaned_data[, 17:37]))
+
+# High Ranked Species
+mean(cleaned_data$Rangifer_NISP[cleaned_data$Rangifer_NISP > 0])
+length(cleaned_data$Rangifer_NISP[cleaned_data$Rangifer_NISP > 0])
+
+mean(cleaned_data$Sus_NISP[cleaned_data$Sus_NISP > 0])
+length(cleaned_data$Sus_NISP[cleaned_data$Sus_NISP > 0])
+
+mean(cleaned_data$Cervus_NISP[cleaned_data$Cervus_NISP > 0])
+length(cleaned_data$Cervus_NISP[cleaned_data$Cervus_NISP > 0])
+
+# Megafauna
+mean(cleaned_data$Mammuthus_NISP[cleaned_data$Mammuthus_NISP > 0])
+length(cleaned_data$Mammuthus_NISP[cleaned_data$Mammuthus_NISP > 0])
+
+mean(cleaned_data$Stephanorhinus_NISP[cleaned_data$Stephanorhinus_NISP > 0])
+length(cleaned_data$Stephanorhinus_NISP[cleaned_data$Stephanorhinus_NISP > 0])
+
+mean(cleaned_data$Palaeoloxodon_NISP[cleaned_data$Palaeoloxodon_NISP > 0])
+length(cleaned_data$Palaeoloxodon_NISP[cleaned_data$Palaeoloxodon_NISP > 0])
+
+# GAM - Mammuthus
+library(mgcv)
+
+mod1 <- gam(Mammuthus_NISP ~ s(X) + s(Y) + s(meanage), data = cleaned_data, family = gaussian)
+
+plot(Mammuthus_NISP ~ X, data = cleaned_data)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(X = -10:130, Y = mean(cleaned_data$Y), meanage = mean(cleaned_data$meanage)), se.fit = TRUE)
+lines(-10:130, ilink(pred$fit))
+lines(-10:130, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(-10:130, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Mammuthus_NISP ~ Y, data = cleaned_data)
+pred <- predict(mod1, data.frame(Y = -10:130, X = mean(cleaned_data$X), meanage = mean(cleaned_data$meanage)), se.fit = TRUE)
+lines(-10:130, ilink(pred$fit))
+lines(-10:130, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(-10:130, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Mammuthus_NISP ~ meanage, data = cleaned_data)
+pred <- predict(mod1, data.frame(Y = mean(cleaned_data$Y), X = mean(cleaned_data$X), meanage = 20000:200000), se.fit = TRUE)
+lines(20000:200000, ilink(pred$fit))
+lines(20000:200000, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(20000:200000, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+# GAM - Rangifer
+mod1 <- gam(Rangifer_NISP ~ s(X) + s(Y) + s(meanage), data = cleaned_data, family = quasibinomial)
+
+plot(Rangifer_NISP ~ X, data = cleaned_data)
+ilink <- family(mod1)$linkinv
+pred <- predict(mod1, data.frame(X = -10:130, Y = mean(cleaned_data$Y), meanage = mean(cleaned_data$meanage)), se.fit = TRUE)
+lines(-10:130, ilink(pred$fit))
+lines(-10:130, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(-10:130, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Rangifer_NISP ~ Y, data = cleaned_data)
+pred <- predict(mod1, data.frame(Y = -10:130, X = mean(cleaned_data$X), meanage = mean(cleaned_data$meanage)), se.fit = TRUE)
+lines(-10:130, ilink(pred$fit))
+lines(-10:130, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(-10:130, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+plot(Rangifer_NISP ~ meanage, data = cleaned_data)
+pred <- predict(mod1, data.frame(Y = mean(cleaned_data$Y), X = mean(cleaned_data$X), meanage = 20000:200000), se.fit = TRUE)
+lines(20000:200000, ilink(pred$fit))
+lines(20000:200000, ilink(pred$fit + 1.96 * pred$se.fit), lty = 2)
+lines(20000:200000, ilink(pred$fit - 1.96 * pred$se.fit), lty = 2)
+
+
+
+# Time-binned means
+tenk <- round(cleaned_data$meanage, -4)
+plot(aggregate(Rangifer_NISP ~ tenk, cleaned_data, FUN = mean), pch = 19, ylim = c(0, 1), xlim = c(20000, 70000))
+points(aggregate(Sus_NISP ~ tenk, cleaned_data, FUN = mean), pch = 19, col = 2)
+points(aggregate(Cervus_NISP ~ tenk, cleaned_data, FUN = mean), pch = 19, col = 3)
+points(aggregate(Equus_NISP ~ tenk, cleaned_data, FUN = mean), pch = 19, col = 4)
+points(aggregate(Mammuthus_NISP ~ tenk, cleaned_data, FUN = mean), pch = 19, col = 5)
+legend("topright",
+       legend = c("Rangifer", "Sus", "Cervus", "Equus", "Mammuthus"),
+       col = c(1, 2, 3, 4, 5),
+       pch = 19)
+
+par(pty = "s")
+plot(Rangifer_NISP~RD_Suitability,cleaned_data, ylab="Proportion Reindeer",xlab="Reindeer Suitability")
+mod1<-glm(Rangifer_NISP~RD_Suitability,cleaned_data,family=quasibinomial)
+ilink <- family(mod1)$linkinv
+pred<-predict(mod1,data.frame(RD_Suitability=seq(0,1,0.001)),se.fit=T)
+lines(seq(0,1,0.001),ilink(pred$fit))
+lines(seq(0,1,0.001),ilink(pred$fit+1.96*pred$se.fit),lty=2)
+lines(seq(0,1,0.001),ilink(pred$fit-1.96*pred$se.fit),lty=2)
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+library(rnaturalearth)  # For world map data
+library(rnaturalearthdata)
+library(sf)          # For spatial data
+library(ggspatial)
+```
+
+
+
+```{r}
+
+ggplot() +
+  geom_sf(data = world, fill = "gray95", color = "gray70", size = 0.2) +
+  geom_point(data = data, aes(x = X, y = Y), color = "red", size = 2) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  ) + 
+  labs(
+    x = NULL,
+    y = NULL
+  )
+
+```
