@@ -25,7 +25,7 @@ The primary dataset is derived from the **Role of Culture in Early Expansions of
 
 - **Initial Dataset:** 9,422 zooarchaeological assemblages across Western Eurasia.
 - **Filtering Criteria:** Restricting observations to contexts with absolute dates (radiometric, luminescence, amino acid, ESR) and valid NISP counts for class *Mammalia*.
-- **Taxonomic Standardization:** Focused on **21 target genera**. Proportional abundances were calculated by excluding rodent remains (*Rodentia*) to eliminate background noise:
+- **Taxonomic Standardization:** Focused on 21 target genera. Proportional abundances were calculated by excluding rodent remains (*Rodentia*) to eliminate background noise:
   $$\text{Standardized Proportion} = \frac{\text{Genus NISP}}{\text{Total Mammalia NISP} - \text{Rodentia NISP}}$$
 
 
